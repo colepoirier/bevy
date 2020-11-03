@@ -9,6 +9,7 @@ use bevy_utils::{HashMap, HashSet};
 use crossbeam_channel::TryRecvError;
 use parking_lot::RwLock;
 use std::{
+    cell::RefCell,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -371,6 +372,30 @@ impl AssetServer {
 
         Ok(handle_ids)
     }
+
+    pub fn load_resource_sync<T: Resource, P: AsRef<Path>, L: AssetLoader<T>>(
+        &self,
+        path: P,
+        loader: L,
+    ) -> Result<T, AssetServerError>
+    where
+        T: 'static,
+    {
+        let r = ASSET_SERVER.with(|entry| {
+            // Set reference to the current AssetServer
+            entry.replace(Some(self as *const _));
+
+            let path = path.as_ref();
+            let r = loader.load_from_file(path);
+
+            // Unsets the reference (not matter what)
+            entry.replace(None);
+
+            r
+        });
+
+        Ok(r?)
+    }
 }
 
 #[cfg(feature = "filesystem_watcher")]
@@ -410,5 +435,72 @@ pub fn filesystem_watcher_system(asset_server: Res<AssetServer>) {
             }
             changed.extend(paths);
         }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// ? NOTE: The following Serialize and Deserialize only work for sync methods
+
+thread_local! {
+    // NOT as bad as it seams
+    static ASSET_SERVER: RefCell<Option<*const AssetServer>> = RefCell::new(None);
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum HandleHint<'a> {
+    Path(&'a str),
+    Uuid(HandleId),
+}
+
+impl<T: 'static> serde::Serialize for Handle<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // TODO: Should fallback to uuid serialization?
+        ASSET_SERVER.with(|entry| {
+            if let Some(ptr) = *entry.borrow() {
+                let server = unsafe { ptr.as_ref().unwrap() };
+                if let Some(path) = server
+                    .asset_info
+                    .read()
+                    .get(&self.id)
+                    .map(|info| info.path.to_str())
+                    .flatten()
+                {
+                    Some(HandleHint::Path(path)).serialize(serializer)
+                } else {
+                    serializer.serialize_none()
+                }
+            } else {
+                serializer.serialize_none()
+            }
+        })
+    }
+}
+
+impl<'de, T: 'static> serde::Deserialize<'de> for Handle<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        ASSET_SERVER.with(|instance| {
+            <Option<HandleHint>>::deserialize(deserializer).and_then(|hint| {
+                if let Some(ptr) = *instance.borrow() {
+                    let server = unsafe { ptr.as_ref().unwrap() };
+                    match hint {
+                        None => Ok(Handle::default()),
+                        Some(HandleHint::Path(path)) => server.load(path).map_err(D::Error::custom),
+                        Some(HandleHint::Uuid(_)) => unimplemented!(),
+                    }
+                } else {
+                    // Default handle
+                    Ok(Handle::default())
+                }
+            })
+        })
     }
 }
