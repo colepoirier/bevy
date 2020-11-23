@@ -1,6 +1,5 @@
 use bevy_app::prelude::*;
 use bevy_asset::AddAsset;
-use bevy_ecs::prelude::*;
 use bevy_type_registry::RegisterType;
 
 pub mod generic;
@@ -33,14 +32,14 @@ impl Plugin for AnimationPlugin {
             //.add_asset_loader(ClipLoader)
             .add_stage_after(stage::UPDATE, stage::ANIMATE)
             .register_component::<Animator>()
-            .add_system_to_stage(stage::ANIMATE, animator_update.thread_local_system())
-            .add_system_to_stage_front(stage::ANIMATE, animator_fetch.thread_local_system());
+            .add_system_to_stage(stage::ANIMATE, animator_update)
+            .add_system_to_stage_front(stage::ANIMATE, animator_fetch);
 
         // Skinning
         app.add_asset::<MeshSkin>()
             .register_component_with::<MeshSkinBinder>(|reg| reg.map_entities())
             .register_component::<MeshSkinnerDebuger>()
-            .add_system_to_stage(stage::POST_UPDATE, mesh_skinner_debugger_update.system())
-            .add_system_to_stage_front(stage::UPDATE, mesh_skinner_startup.system());
+            .add_system_to_stage(stage::UPDATE, mesh_skinner_debugger_update)
+            .add_system_to_stage_front(stage::UPDATE, mesh_skinner_startup);
     }
 }
