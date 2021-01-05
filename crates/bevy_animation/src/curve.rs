@@ -17,8 +17,7 @@ use crate::lerping::Lerp;
 #[derive(Default, Debug)]
 pub struct Curve<T> {
     frame_rate: u32,
-    //frame_duration: f32,
-    frames: Vec<u16>,
+    offset: u16,
     values: Vec<T>,
 }
 
@@ -26,8 +25,7 @@ impl<T: Clone> Clone for Curve<T> {
     fn clone(&self) -> Self {
         Self {
             frame_rate: self.frame_rate,
-            //frame_duration: self.frame_duration,
-            frames: self.frames.clone(),
+            offset: self.offset,
             values: self.values.clone(),
         }
     }
@@ -72,11 +70,9 @@ impl<T> Curve<T> {
             "time samples must be on ascending order"
         );
 
-        let rate = frame_rate as f32;
         let curve = Self {
             frame_rate,
-            //frame_duration: 1.0 / r,
-            frames: samples.iter().copied().map(|t| (t * rate) as u16).collect(),
+            offset: (samples[0] * frame_rate as f32) as u16,
             values,
         };
 
@@ -84,22 +80,19 @@ impl<T> Curve<T> {
     }
 
     pub fn from_line(t0: f32, t1: f32, v0: T, v1: T) -> Self {
-        let frame_duration = 1.0 / 30.0;
-        let t0 = (t0 * frame_duration) as u16;
-        let t1 = (t1 * frame_duration) as u16;
-        Self {
-            frame_rate: 30,
-            //frame_duration,
-            frames: if t1 >= t0 { vec![t0, t1] } else { vec![t1, t0] },
-            values: vec![v0, v1],
-        }
+        todo!()
+        // let frame_duration = 1.0 / (t1 - t0);
+        // Self {
+        //     frame_rate: 30,
+        //     offset: (t0 * frame_duration) as u16,
+        //     values: vec![v0, v1],
+        // }
     }
 
     pub fn from_constant(v: T) -> Self {
         Self {
             frame_rate: 30,
-            //frame_duration: 1.0 / 30.0,
-            frames: vec![0],
+            offset: 0,
             values: vec![v],
         }
     }
@@ -116,17 +109,12 @@ impl<T> Curve<T> {
     }
 
     pub fn duration(&self) -> f32 {
-        self.frames.last().copied().unwrap_or(0) as f32 / self.frame_rate as f32
+        debug_assert!(self.values.len() > 0, "curve has no keyframes");
+        (self.values.len() - 1 + self.offset as usize) as f32 / self.frame_rate as f32
     }
 
     pub fn trim(&mut self, keyframes: u16) {
-        let keyframes = self
-            .frames
-            .get(0)
-            .copied()
-            .map_or(keyframes, |max| keyframes.max(max));
-
-        self.frames.iter_mut().for_each(|t| *t -= keyframes);
+        self.offset -= keyframes.max(self.offset);
     }
 
     // pub fn iter(&self) -> impl Iterator<Item = (f32, &T)> {
@@ -149,14 +137,8 @@ where
     /// sampling takes longer to evaluate as much as time get closer to curve duration
     /// and it get worse with more keyframes.
     pub fn sample(&self, time: f32) -> T {
-        // Index guessing gives a small search optimization
-        let index = if time < self.duration() * 0.5 {
-            0
-        } else {
-            self.frames.len() - 1
-        };
-
-        self.sample_indexed(index as u16, time).1
+        // Don't care about the time
+        self.sample_indexed(0, time).1
     }
 
     /// Samples the curve starting from some keyframe index, this make the common case `O(1)`
@@ -164,54 +146,25 @@ where
     /// **NOTE** Each keyframe is indexed by a `u16` to reduce memory usage when using the keyframe caching
     pub fn sample_indexed(&self, index: u16, time: f32) -> (u16, T) {
         // Adjust for the current keyframe index
-        let last_index = self.frames.len() - 1;
-        let t = time * self.frame_rate as f32;
-        let f = t.ceil() as u16;
-
-        let mut i0;
-        let mut f0;
-        let mut i1 = (index as usize).max(0).min(last_index);
-        let mut f1 = self.frames[i1];
-        if f1 < f {
-            // Forward search
-            loop {
-                if i1 == last_index {
-                    return (last_index as u16, self.values[last_index].clone());
-                }
-                i0 = i1;
-                i1 += 1;
-
-                f1 = self.frames[i1];
-                if f1 >= f {
-                    f0 = self.frames[i0];
-                    break;
-                }
-            }
-        } else {
-            // Backward search
-            loop {
-                if i1 == 0 {
-                    return (0, self.values[0].clone());
-                }
-
-                i0 = i1 - 1;
-                f0 = self.frames[i0];
-
-                if f0 <= f {
-                    f1 = self.frames[i1];
-                    break;
-                }
-
-                i1 = i0;
-            }
+        let t = time * self.frame_rate as f32 - self.offset as f32;
+        if t.is_sign_negative() {
+            println!("under {:?}", t);
+            return (0, self.values[0].clone());
         }
 
-        // Lerp the value
-        let t = (t - f0 as f32) / (f1 - f0) as f32;
-        debug_assert!(t >= 0.0 && t <= 1.0, "t = {} but should be normalized", t); // Checks if it's required to normalize t
-        let value = T::lerp(&self.values[i0], &self.values[i1], t);
+        let f = t.trunc() as usize;
 
-        (i1 as u16, value)
+        let f_n = self.values.len() - 1;
+        if f >= f_n {
+            println!("over {:?}", (f, t));
+            return (f_n as u16, self.values[f_n].clone());
+        }
+
+        let t = t.fract();
+        // Lerp the value
+        let value = T::lerp(&self.values[f], &self.values[f + 1], t);
+
+        (0, value)
     }
 
     #[inline(always)]
