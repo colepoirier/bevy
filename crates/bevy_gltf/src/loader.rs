@@ -305,21 +305,22 @@ async fn load_gltf<'a, 'b>(
                     let values = values.map(|v| Vec3::from(v)).collect::<Vec<_>>();
                     property_path += "@Transform.translation";
                     clip_curves_translation_and_scale
-                        .push((property_path, Curve::new(time_stamps, values)));
+                        .push((property_path, Curve::from_samples(time_stamps, values)));
 
                     // TODO: This is a runtime importer so here's no place for further optimizations
                 }
                 ReadOutputs::Rotations(values) => {
                     let values = values.into_f32().map(|v| Quat::from(v)).collect::<Vec<_>>();
                     property_path += "@Transform.rotation";
-                    clip_curves_rotation.push((property_path, Curve::new(time_stamps, values)));
+                    clip_curves_rotation
+                        .push((property_path, Curve::from_samples(time_stamps, values)));
                 }
                 ReadOutputs::Scales(values) => {
                     let values = values.map(|v| Vec3::from(v)).collect::<Vec<_>>();
 
                     property_path += "@Transform.scale";
                     clip_curves_translation_and_scale
-                        .push((property_path, Curve::new(time_stamps, values)));
+                        .push((property_path, Curve::from_samples(time_stamps, values)));
                 }
                 ReadOutputs::MorphTargetWeights(_) => {
                     unimplemented!("morph targets aren't current supported")
@@ -329,14 +330,12 @@ async fn load_gltf<'a, 'b>(
 
         // Make sure the start frame is always 0.0
         for (property_path, mut curve) in clip_curves_rotation {
-            Curve::<Quat>::add_offset_time(&mut curve, -start_time);
-            //curve.add_time_offset(-start_time);
+            curve.trim((start_time * curve.frame_rate() as f32) as u16);
             clip.add_curve_at_path(&property_path, curve);
         }
 
         for (property_path, mut curve) in clip_curves_translation_and_scale {
-            Curve::<Vec3>::add_offset_time(&mut curve, -start_time);
-            //curve.add_time_offset(-start_time);
+            curve.trim((start_time * curve.frame_rate() as f32) as u16);
             clip.add_curve_at_path(&property_path, curve);
         }
 
