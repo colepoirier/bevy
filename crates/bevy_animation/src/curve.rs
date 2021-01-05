@@ -165,47 +165,53 @@ where
     pub fn sample_indexed(&self, index: u16, time: f32) -> (u16, T) {
         // Adjust for the current keyframe index
         let last_index = self.frames.len() - 1;
-        let mut index = index as usize;
         let t = time * self.frame_rate as f32;
         let f = t.ceil() as u16;
 
-        index = index.max(0).min(last_index);
-        if self.frames[index] < f {
+        let mut i0;
+        let mut f0;
+        let mut i1 = (index as usize).max(0).min(last_index);
+        let mut f1 = self.frames[i1];
+        if f1 < f {
             // Forward search
             loop {
-                if index == last_index {
+                if i1 == last_index {
                     return (last_index as u16, self.values[last_index].clone());
                 }
-                index += 1;
+                i0 = i1;
+                i1 += 1;
 
-                if self.frames[index] >= f {
+                f1 = self.frames[i1];
+                if f1 >= f {
+                    f0 = self.frames[i0];
                     break;
                 }
             }
         } else {
             // Backward search
             loop {
-                if index == 0 {
+                if i1 == 0 {
                     return (0, self.values[0].clone());
                 }
 
-                let i = index - 1;
-                if self.frames[i] <= f {
+                i0 = i1 - 1;
+                f0 = self.frames[i0];
+
+                if f0 <= f {
+                    f1 = self.frames[i1];
                     break;
                 }
 
-                index = i;
+                i1 = i0;
             }
         }
 
         // Lerp the value
-        let i = index - 1;
-        let previous_time = self.frames[i as usize];
-        let t = (t - previous_time as f32) / (self.frames[index] - previous_time) as f32;
+        let t = (t - f0 as f32) / (f1 - f0) as f32;
         debug_assert!(t >= 0.0 && t <= 1.0, "t = {} but should be normalized", t); // Checks if it's required to normalize t
-        let value = T::lerp(&self.values[i], &self.values[index], t);
+        let value = T::lerp(&self.values[i0], &self.values[i1], t);
 
-        (index as u16, value)
+        (i1 as u16, value)
     }
 
     #[inline(always)]
