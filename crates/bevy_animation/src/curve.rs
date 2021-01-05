@@ -145,26 +145,33 @@ where
     ///
     /// **NOTE** Each keyframe is indexed by a `u16` to reduce memory usage when using the keyframe caching
     pub fn sample_indexed(&self, index: u16, time: f32) -> (u16, T) {
+        let _ = index;
+
         // Adjust for the current keyframe index
         let t = time * self.frame_rate as f32 - self.offset as f32;
         if t.is_sign_negative() {
-            println!("under {:?}", t);
             return (0, self.values[0].clone());
         }
 
-        let f = t.trunc() as usize;
+        let f = t.trunc();
+        let t = t - f;
 
-        let f_n = self.values.len() - 1;
+        let f = f as u16;
+        let f_n = self.values.len() as u16 - 1;
         if f >= f_n {
-            println!("over {:?}", (f, t));
-            return (f_n as u16, self.values[f_n].clone());
+            return (f_n, self.values[f_n as usize].clone());
         }
 
-        let t = t.fract();
         // Lerp the value
-        let value = T::lerp(&self.values[f], &self.values[f + 1], t);
+        let value = unsafe {
+            T::lerp(
+                self.values.get_unchecked(f as usize),
+                self.values.get_unchecked(f as usize + 1),
+                t,
+            )
+        };
 
-        (0, value)
+        (f, value)
     }
 
     #[inline(always)]
