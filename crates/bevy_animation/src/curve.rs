@@ -16,8 +16,11 @@ use crate::lerping::Lerp;
 // TODO: impl Serialize, Deserialize
 #[derive(Default, Debug)]
 pub struct Curve<T> {
-    frame_rate: u32,
-    offset: u16,
+    // ? NOTE: Has I learned from benches casting to f32 is quite expensive
+    // ? so frame rate and offset values must be stored as f32
+    frame_rate: f32,
+    /// Negative number of frames before the curve starts
+    offset: f32,
     values: Vec<T>,
 }
 
@@ -38,13 +41,13 @@ impl<T> Curve<T> {
             30
         } else {
             let r = 1.0 / (samples[1] - samples[0]);
-            r as u32
+            r as usize
         };
 
         Self::from_samples_and_rate(frame_rate, samples, values)
     }
 
-    pub fn from_samples_and_rate(frame_rate: u32, samples: Vec<f32>, values: Vec<T>) -> Self {
+    pub fn from_samples_and_rate(frame_rate: usize, samples: Vec<f32>, values: Vec<T>) -> Self {
         // TODO: Result?
 
         // Make sure both have the same length
@@ -70,9 +73,10 @@ impl<T> Curve<T> {
             "time samples must be on ascending order"
         );
 
+        let frame_rate = frame_rate as f32;
         let curve = Self {
             frame_rate,
-            offset: (samples[0] * frame_rate as f32) as u16,
+            offset: -(samples[0] * frame_rate),
             values,
         };
 
@@ -80,19 +84,19 @@ impl<T> Curve<T> {
     }
 
     pub fn from_line(t0: f32, t1: f32, v0: T, v1: T) -> Self {
-        todo!()
-        // let frame_duration = 1.0 / (t1 - t0);
-        // Self {
-        //     frame_rate: 30,
-        //     offset: (t0 * frame_duration) as u16,
-        //     values: vec![v0, v1],
-        // }
+        assert!(t0 < t1, "t0 isn't smaller than t1");
+        let frame_duration = 1.0 / (t1 - t0);
+        Self {
+            frame_rate: frame_duration,
+            offset: -t0 * frame_duration,
+            values: vec![v0, v1],
+        }
     }
 
     pub fn from_constant(v: T) -> Self {
         Self {
-            frame_rate: 30,
-            offset: 0,
+            frame_rate: 30.0,
+            offset: 0.0,
             values: vec![v],
         }
     }
@@ -104,17 +108,16 @@ impl<T> Curve<T> {
     //assert!(samples.len() > 1, "curve can't be empty");
     // }
 
-    pub const fn frame_rate(&self) -> u32 {
-        self.frame_rate
+    pub const fn frame_rate(&self) -> usize {
+        self.frame_rate as usize
     }
 
     pub fn duration(&self) -> f32 {
-        debug_assert!(self.values.len() > 0, "curve has no keyframes");
-        (self.values.len() - 1 + self.offset as usize) as f32 / self.frame_rate as f32
+        ((self.values.len() as f32 - 1.0 - self.offset) / self.frame_rate).max(0.0)
     }
 
     pub fn trim(&mut self, keyframes: u16) {
-        self.offset -= keyframes.max(self.offset);
+        self.offset += (keyframes as f32).max(-self.offset);
     }
 
     // pub fn iter(&self) -> impl Iterator<Item = (f32, &T)> {
@@ -148,7 +151,8 @@ where
         let _ = index;
 
         // Adjust for the current keyframe index
-        let t = time * self.frame_rate as f32 - self.offset as f32;
+        // ? NOTE: Casting from usize to f32 is expensive
+        let t = time.mul_add(self.frame_rate, self.offset);
         if t.is_sign_negative() {
             // Underflow clamp
             return (0, self.values[0].clone());
@@ -157,24 +161,24 @@ where
         let f = t.trunc();
         let t = t - f;
 
-        let f = f as u16;
-        let f_n = self.values.len() as u16 - 1;
+        let f = f as usize;
+        let f_n = self.values.len() - 1;
         if f >= f_n {
             // Overflow clamp
-            return (f_n, self.values[f_n as usize].clone());
+            return (0, self.values[f_n].clone());
         }
 
         // Lerp the value
         // SAFETY: bounds checks are performed in the lines above
         let value = unsafe {
             T::lerp(
-                self.values.get_unchecked(f as usize),
-                self.values.get_unchecked(f as usize + 1),
+                self.values.get_unchecked(f),
+                self.values.get_unchecked(f + 1),
                 t,
             )
         };
 
-        (f, value)
+        (0, value)
     }
 
     #[inline(always)]
