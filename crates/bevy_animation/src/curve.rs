@@ -150,6 +150,7 @@ where
         // Adjust for the current keyframe index
         let t = time * self.frame_rate as f32 - self.offset as f32;
         if t.is_sign_negative() {
+            // Underflow clamp
             return (0, self.values[0].clone());
         }
 
@@ -159,10 +160,12 @@ where
         let f = f as u16;
         let f_n = self.values.len() as u16 - 1;
         if f >= f_n {
+            // Overflow clamp
             return (f_n, self.values[f_n as usize].clone());
         }
 
         // Lerp the value
+        // SAFETY: bounds checks are performed in the lines above
         let value = unsafe {
             T::lerp(
                 self.values.get_unchecked(f as usize),
